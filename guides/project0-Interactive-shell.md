@@ -1,17 +1,18 @@
 # Pintos Interactive Shell (Kernel Monitor) — A Walkthrough Guide
 
 **Scope:** Project 0 — Interactive Shell for Pintos OS
+
 **Audience:** Anyone picking up this assignment for the first time
 
-This guide walks through *why* the code looks the way it does, not just *what* to paste. If you only copy the final code without understanding each piece, you'll struggle the moment a lecturer asks you to explain it — or the moment something breaks and you need to debug it yourself.
+This guide walks through *why* the code looks the way it does, not just *what* to paste. If you only copy the final code without understanding each piece, you'll struggle the moment a lecturer asks you to explain it or the moment something breaks and you need to debug it yourself.
 
 ---
 
 ## 1. What are we actually building?
 
-Two things, but they're really one feature:
+Two things,but they're really one feature:
 
-- **The kernel monitor** — the interactive loop itself: it prints a `CS2042>` prompt, reads what you type, and figures out what to do with it.
+- **The kernel monitor** - the interactive loop itself: it prints a `CS2042>` prompt, reads what you type and figures out what to do with it.
 - **The shell commands** — the specific actions the monitor recognizes: `whoami`, `shutdown`, `time`, `ram`, `thread`, `priority`, `exit`.
 
 Don't think of these as two separate deliverables. The monitor is the *engine*; the commands are what it *does* once running.
@@ -22,7 +23,7 @@ Don't think of these as two separate deliverables. The monitor is the *engine*; 
 
 **Only one file: `threads/init.c`.**
 
-The assignment doc points you to a `// TODO` placeholder inside `pintos_init()` — this fires only when Pintos boots with **no command-line arguments**, i.e. when nobody told it to run a specific test or task. That's the natural place for an interactive shell: if there's nothing else to do, drop the user into a prompt.
+The assignment doc points you to a `// TODO` placeholder inside `pintos_init()` - this fires only when Pintos boots with **no command-line arguments**, i.e. when nobody told it to run a specific test or task. That's the natural place for an interactive shell: if there's nothing else to do, drop the user into a prompt.
 
 You don't need to touch the Makefile or add new files. Everything you need (`input_getc()`, `printf()`, `shutdown_power_off()`, etc.) is already declared via `#include`s that exist at the top of `init.c`.
 
@@ -32,7 +33,7 @@ You don't need to touch the Makefile or add new files. Everything you need (`inp
 
 This is the single most important thing to understand before writing a line of code.
 
-You're writing **kernel-mode** code. Things like `scanf()`, `fgets()`, or Python-style `input()` do not exist here — those are user-space library functions that themselves rely on system calls into an OS. But you *are* the OS right now. There's nothing underneath you to call.
+You're writing **kernel-mode** code. Things like `scanf()`, `fgets()` or Python-style `input()` do not exist here, those are user space library functions that themselves rely on system calls into an OS. But you *are* the OS right now. There's nothing underneath you to call.
 
 Pintos gives you a much more primitive building block instead:
 
@@ -40,9 +41,13 @@ Pintos gives you a much more primitive building block instead:
 char c = input_getc();
 ```
 
-This grabs exactly **one raw keystroke** from the keyboard/serial queue — nothing more. No line buffering. No backspace handling. No on-screen echo. You have to build all of that yourself.
+This grabs exactly **one raw keystroke** from the keyboard/serial queue. 
 
-This mirrors a pattern you'll see across all of computing: every convenience you're used to (`scanf`, terminal line-editing, etc.) is a layer built on top of something more primitive. In kernel code, you *are* that primitive layer.
+There is no line buffering. No backspace handling. No on screen echo. You have to build all of that yourself.
+
+This mirrors a pattern you'll see across all of computing: every convenience you're used (`scanf`, terminal line-editing, etc.) is a layer built on top of something more primitive. 
+
+In kernel code, you *are* that primitive layer.
 
 ---
 
@@ -61,7 +66,7 @@ An infinite loop that keeps showing the prompt after every command — until the
 
 ### 4.2 Reading one line, character by character
 
-Since there's no line-reading function handed to you, you build one manually:
+Since there's no line reading function handed to you, you build one manually:
 
 ```c
 char buffer[128];
@@ -117,11 +122,11 @@ If the user just hits Enter with nothing typed, don't bother dispatching a comma
 
 ## 5. Dispatching commands
 
-Once you have a clean, null-terminated `buffer`, compare it against known command strings:
+Once you have a clean, null terminated `buffer`, compare it against known command strings:
 
 ```c
 if (strcmp(buffer, "whoami") == 0) {
-    printf("Nisith - 240285P\n");
+    printf("Your name - Index\n");
 }
 else if (strcmp(buffer, "shutdown") == 0) {
     printf("Shutting down PintOS...\n");
@@ -170,7 +175,7 @@ printf("Time since epoch: %lld seconds\n", (long long) rtc_get_time());
 
 `rtc_get_time()` returns `unsigned long` (per `devices/rtc.h`). `printf` is a variadic function — it has no compile-time way to know the actual type of each argument, so it trusts the format specifier completely. If the specifier and the actual argument type don't match, you can get garbage output or undefined behavior.
 
-`%lld` expects a `long long`. Casting the return value explicitly with `(long long)` makes the types match exactly — safe, and avoids a compiler format-mismatch warning.
+`%lld` expects a `long long`. Casting the return value explicitly with `(long long)` makes the types match exactly — safe, and avoids a compiler format mismatch warning.
 
 ---
 
@@ -212,7 +217,7 @@ if (*argv != NULL) {
       }
 
       if (strcmp(buffer, "whoami") == 0) {
-          printf("Nisith - 240285P\n");
+          printf("Your name - Index\n");
       }
       else if (strcmp(buffer, "shutdown") == 0) {
           printf("Shutting down PintOS...\n");
@@ -259,7 +264,7 @@ Note that `exit`'s `break` falls through naturally into the *existing* `shutdown
    CS2042>
    ```
 4. Try each command. Try `exit` last — it should print the goodbye message and shut the VM down cleanly.
-5. Try an unrecognized command (e.g. `foo`) — it should print `Unknown command: foo` and re-show the prompt, not crash.
+5. Try an unrecognized command (e.g. `foo`) — it should print `Unknown command: foo` and re show the prompt, not crash.
 6. Try Backspace while typing — the character should visually disappear, not just stop appearing.
 
 ---
@@ -269,13 +274,7 @@ Note that `exit`'s `break` falls through naturally into the *existing* `shutdown
 - **Forgetting the bounds check** on `buffer` — leads to potential stack buffer overflow if someone pastes/types a very long line.
 - **Using `==` instead of `strcmp`** for string comparison — this is a classic C gotcha coming from higher-level languages.
 - **Missing the `(long long)` cast** on `rtc_get_time()` — works "by accident" on some setups, but it's undefined behavior technically, and the compiler will warn you.
-- **Trying to use `scanf`/`fgets`** — they don't exist here. If your code doesn't compile because of a missing library function, it's usually because you're reaching for something that only exists in user-space.
-
----
-
-## 9. Why this design, and not something fancier?
-
-You might wonder why not use a more "proper" data structure (like a command table with function pointers, similar to how `run_actions()` handles its actions further down in the same file). That *is* a cleaner pattern, and worth knowing about — but a straightforward `if/else if` chain is perfectly fine for 7 fixed commands, and it's easier to read for a first pass at kernel programming. If you want to push yourself, try refactoring it into a table-driven dispatcher once the basic version works — it's a nice exercise in matching the style already used elsewhere in `init.c` (see `run_actions()`'s `struct action` table for inspiration).
+- **Trying to use `scanf`/`fgets`** — they don't exist here. If your code doesn't compile because of a missing library function, it's usually because you're reaching for something that only exists in user space.
 
 ---
 
