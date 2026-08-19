@@ -12,7 +12,7 @@ Each project below has a detailed walkthrough guide in [`guides/`](./guides) —
 
 A kernel-level interactive monitor (`CS2042>`-style prompt) built into `threads/init.c`, supporting commands like `whoami`, `shutdown`, `time`, `ram`, `thread`, `priority`, and `exit`. Since there's no standard library available in kernel mode, input reading, line editing, and command dispatch are all built from scratch on top of Pintos's raw `input_getc()`.
 
-📄 Guide: [`guides/project0-interactive-shell.md`](./guides/project0-interactive-shell.md)
+📄 Guide: [`guides/project0-Interactive-shell.md`](.~pintos/guides/project0-Interactive-shell.md)
 
 ### Project 1 — Threads
 
