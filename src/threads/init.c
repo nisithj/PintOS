@@ -134,12 +134,75 @@ pintos_init (void)
     run_actions (argv);
   } else {
     // TODO: no command line passed to kernel. Run interactively 
+    //NEW CODE START:
+    while (1) {
+      printf("CS2042> ");
+      
+      char buffer[128];
+      int i = 0;
+      
+      while (1) {
+          char c = input_getc(); // Getting the inputed key
+          
+          if (c == '\r' || c == '\n') // When 'Enter' is entered 
+          { 
+              printf("\n");
+              buffer[i] = '\0';
+              break;
+          } else if (c == '\b' || c == 127) // When 'Backspace' is entered
+          { 
+              if (i > 0) {
+                  i--;
+                  printf("\b \b");
+              }
+          } else if (i < 127) {
+              buffer[i] = c;
+              i++;
+              printf("%c", c);
+          }
+      }
+      
+      if (strlen(buffer) == 0) {
+          continue; 
+      }
+      
+      if (strcmp(buffer, "whoami") == 0) {
+          printf("Nisith - 240285P\n");
+      } 
+      else if (strcmp(buffer, "shutdown") == 0) {
+          printf("Shutting down PintOS...\n");
+          shutdown_power_off();
+      } 
+      else if (strcmp(buffer, "time") == 0) {
+          // RTC provides time since epoch or system boot
+          printf("Time since epoch: %lld seconds\n", (long long) rtc_get_time());
+      } 
+      else if (strcmp(buffer, "ram") == 0) {
+          printf("Available RAM: %u pages (%u KB)\n", init_ram_pages, init_ram_pages * 4);
+      } 
+      else if (strcmp(buffer, "thread") == 0) {
+          // Calls PintOS thread statistics function
+          thread_print_stats();
+      } 
+      else if (strcmp(buffer, "priority") == 0) {
+          printf("Current thread priority: %d\n", thread_get_priority());
+      } 
+      else if (strcmp(buffer, "exit") == 0) {
+          printf("Exiting interactive shell... Bye!\n");
+          break; 
+      } 
+      else {
+          printf("Unknown command: %s\n", buffer);
+      }
   }
+  }
+  // NEW CODE FINISH HERE
 
   /* Finish up. */
   shutdown ();
   thread_exit ();
 }
+
 
 /* Clear the "BSS", a segment that should be initialized to
    zeros.  It isn't actually stored on disk or zeroed by the
