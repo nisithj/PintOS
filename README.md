@@ -1,6 +1,6 @@
 # Pintos OS
 
-This repo contains coursework implementing parts of [Pintos](https://pintos-os.org/), a teaching operating system used to learn OS internals — threading, scheduling, synchronization, and (in later projects) user programs, virtual memory, and file systems.
+This repo contains coursework implementing parts of [Pintos](https://pintos-os.org/), a teaching operating system used to learn OS internals — threading, scheduling, synchronization and (in later projects) user programs, virtual memory, and file systems.
 
 Each project below has a detailed walkthrough guide in [`guides/`](./guides) — not just the final code, but the reasoning behind it, written so someone new to Pintos can actually follow along and understand *why*, not just copy-paste.
 
@@ -10,7 +10,7 @@ Each project below has a detailed walkthrough guide in [`guides/`](./guides) —
 
 ### Project 0 — Interactive Shell
 
-A kernel-level interactive monitor (`CS2042>`-style prompt) built into `threads/init.c`, supporting commands like `whoami`, `shutdown`, `time`, `ram`, `thread`, `priority`, and `exit`. Since there's no standard library available in kernel mode, input reading, line editing, and command dispatch are all built from scratch on top of Pintos's raw `input_getc()`.
+A kernel-level interactive monitor (`CS2042>`-style prompt) built into `threads/init.c`, supporting commands like `whoami`, `shutdown`, `time`, `ram`, `thread`, `priority`, and `exit`. Since there's no standard library available in kernel mode, input reading, line editing and command dispatch are all built from scratch on top of Pintos's raw `input_getc()`.
 
 
 📄 Guide: [`guides/project0-Interactive-shell.md`](./guides/project0-Interactive-shell.md)
