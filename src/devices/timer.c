@@ -205,8 +205,8 @@ timer_interrupt (struct intr_frame *args UNUSED)
   while(!list_empty(&sleep_list) && list_entry(list_front(&sleep_list),struct thread,elem)->wakeup_tick <= current_tick){
     struct list_elem* current = list_front(&sleep_list);
     struct thread *current_thread = list_entry(current,struct thread,elem);
-    thread_unblock(current_thread);
     list_remove(current);
+    thread_unblock(current_thread);
   }
 
   thread_tick ();
