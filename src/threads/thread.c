@@ -249,6 +249,18 @@ thread_unblock (struct thread *t)
   list_insert_ordered (&ready_list, &t->elem,priority_comparator,NULL);
   t->status = THREAD_READY;
   intr_set_level (old_level);
+
+  /*Solving preemption problem*/
+
+  if ( t->priority > thread_current()->priority){
+    if(intr_context()){
+      intr_yield_on_return();
+    }
+    else {
+      thread_yield();
+    }
+  }
+
 }
 
 /* Returns the name of the running thread. */
