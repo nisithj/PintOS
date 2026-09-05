@@ -262,6 +262,40 @@ timer_interrupt (struct intr_frame *args UNUSED)
   4. `list_remove(current)` - removes the node from the list
 
 - We only check the first node of the `sleep_list` and remove it if the time is up. This is the advantage we gained from the sorted list implementation.
+- 
+
+### Testing Mission 1 - Alarm Clock
+
+Pintos doesn't grade missions separately - the full Threads project is checked together with one `make check` run at the end, covering alarm clock, priority donation and MLFQS tests all at once. But while you're still building Mission 1 (before Mission 2 and 3 exist), you can run just its tests:
+
+1. **Build the kernel:**
+```bash
+   cd src/threads
+   make
+```
+
+2. **Move into the build directory** - all test commands run from here, not from `threads/`:
+```bash
+   cd build
+```
+
+3. **Run one alarm-clock test at a time**, by asking `make` for its `.result` file:
+```bash
+   make tests/threads/alarm-single.result
+   make tests/threads/alarm-multiple.result
+   make tests/threads/alarm-simultaneous.result
+   make tests/threads/alarm-zero.result
+   make tests/threads/alarm-negative.result
+```
+   These five cover all of Mission 1.
+
+4. **Read the result.** Each command prints `pass` or `fail` directly. For more detail on a failure, open the matching `.output` file inside `build/` (e.g. `tests/threads/alarm-single.output`) - it shows the full kernel boot log and test trace for that run.
+
+5. **Force a re-run**, if `make` claims a result is already up to date but you've since changed your code:
+```bash
+   rm tests/threads/alarm-single.output
+   make tests/threads/alarm-single.result
+```
 
 
 
