@@ -27,10 +27,22 @@ Three missions extending Pintos's thread system:
 
 ---
 
+
+## Questions
+
+You can find some questions in this repo - [https://github.com/PKU-OS/pintos/tree/master/docs](https://github.com/PKU-OS/pintos/tree/master/docs)
+
+---
+
 ## Building and running
 
 Standard Pintos build/run flow — see the [official Pintos documentation](https://pintos-os.org/) for full setup instructions (toolchain, QEMU, etc.).
 
+---
+
+## Additional resources
+
+[Pintos documentation (PKUFlyingPig)](https://pkuflyingpig.gitbook.io/pintos) — a detailed course guide covering Pintos setup, labs and design docs (from Peking University's OS course)
 
 ---
 
