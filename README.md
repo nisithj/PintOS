@@ -1,6 +1,6 @@
 # Pintos OS
 
-This repo contains coursework implementing parts of [Pintos](https://pintos-os.org/), a teaching operating system used to learn OS internals — threading, scheduling, synchronization and (in later projects) user programs, virtual memory, and file systems.
+This repo contains coursework implementing parts of [Pintos](https://pintos-os.org/), a teaching operating system used to learn OS internals such as threading, scheduling, synchronization and (in later projects) user programs, virtual memory, and file systems.
 
 Each project below has a detailed walkthrough guide in [`guides/`](./guides) — not just the final code, but the reasoning behind it, written so someone new to Pintos can actually follow along and understand *why*, not just copy-paste.
 
@@ -23,7 +23,14 @@ Three missions extending Pintos's thread system:
 - **Mission 2 — Priority Scheduling & Donation:** strict priority scheduling plus priority donation to solve priority inversion, including nested and multiple-donation cases.
 - **Mission 3 — MLFQS (Advanced Scheduler):** a 4.4BSD-style multi-level feedback queue scheduler using fixed-point arithmetic (no FPU in the kernel).
 
-📄 Guide: [`guides/project1-threads.md`](./guides/project1-threads.md) *(coming soon)*
+📄 Guide: [`guides/project1-threads.md`](./guides/project1-threads.md) *(mission 1 - Alarm Clock completed)*
+
+---
+
+
+## Questions
+
+You can find some questions in this repo - [https://github.com/PKU-OS/pintos/tree/master/docs](https://github.com/PKU-OS/pintos/tree/master/docs)
 
 ---
 
@@ -31,10 +38,11 @@ Three missions extending Pintos's thread system:
 
 Standard Pintos build/run flow — see the [official Pintos documentation](https://pintos-os.org/) for full setup instructions (toolchain, QEMU, etc.).
 
-```bash
-cd threads
-make
-```
+---
+
+## Additional resources
+
+[Pintos documentation (PKUFlyingPig)](https://pkuflyingpig.gitbook.io/pintos) — a detailed course guide covering Pintos setup, labs and design docs (from Peking University's OS course)
 
 ---
 
