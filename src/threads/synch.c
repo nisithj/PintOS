@@ -206,8 +206,41 @@ lock_acquire (struct lock *lock)
   ASSERT (!intr_context ());
   ASSERT (!lock_held_by_current_thread (lock));
 
+  /*Priority Donatation additions*/
+  if(lock->holder != NULL){
+
+    struct thread *current_thread = thread_current();    
+
+    /*Adding to the donation list of the holder thread*/
+    list_insert_ordered(&lock->holder->donations,&current_thread->donation_elem,priority_comparator,NULL);
+
+    /*Adding the waiting lock to the thread calling this lock_acquire*/
+    current_thread->waiting_lock = lock;
+
+    /*Multi hoping and donating the priority*/
+
+    struct thread *holder = lock->holder;
+    while (holder != NULL)
+    {
+      if (holder->priority < current_thread->priority)
+      {
+        holder->priority = current_thread->priority;
+        if (holder->waiting_lock != NULL){
+              holder = holder->waiting_lock->holder;
+        }else {
+           holder = NULL;
+        }
+      }
+      else{
+        break;
+      }
+    }
+
+  }
+
   sema_down (&lock->semaphore);
   lock->holder = thread_current ();
+
 }
 
 /* Tries to acquires LOCK and returns true if successful or false
@@ -240,6 +273,31 @@ lock_release (struct lock *lock)
 {
   ASSERT (lock != NULL);
   ASSERT (lock_held_by_current_thread (lock));
+
+  struct thread *curr = thread_current ();
+
+  /* Step 1: remove every donor whose waiting_lock is THIS lock —
+     not just one, since multiple threads can be waiting on the same lock */
+  struct list_elem *e = list_begin (&curr->donations);
+  while (e != list_end (&curr->donations))
+  {
+    struct thread *donor = list_entry (e, struct thread, donation_elem);
+    if (donor->waiting_lock == lock)
+      e = list_remove (e);   /* list_remove returns the next element */
+    else
+      e = list_next (e);
+  }
+
+  /* Step 2: recompute effective priority from whoever's left */
+  if (list_empty (&curr->donations))
+    curr->priority = curr->base_priority;
+  else
+  {
+    struct thread *top_donor = list_entry (list_front (&curr->donations),
+                                            struct thread, donation_elem);
+    curr->priority = (curr->base_priority > top_donor->priority) 
+                       ? curr->base_priority : top_donor->priority;
+  }
 
   lock->holder = NULL;
   sema_up (&lock->semaphore);
