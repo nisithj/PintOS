@@ -354,14 +354,27 @@ thread_foreach (thread_action_func *func, void *aux)
 
 /* Sets the current thread's priority to NEW_PRIORITY. */
 void
-thread_set_priority (int new_priority) 
+thread_set_priority (int new_priority)
 {
-  thread_current ()->priority = new_priority;
+  struct thread *curr = thread_current ();
 
-  if(!list_empty(&ready_list)){
-    if(thread_current ()->priority < list_entry(list_front(&ready_list),struct thread,elem)->priority){
-      thread_yield();
-    }
+  curr->base_priority = new_priority;
+
+  /* Only let it take effect immediately if there's no active donation
+     currently outranking it */
+  if (list_empty (&curr->donations) ||
+      new_priority > list_entry (list_front (&curr->donations),
+                                  struct thread, donation_elem)->priority)
+  {
+    curr->priority = new_priority;
+  }
+
+  /* Preemption check — unchanged from before, just now using
+     whatever priority ended up being set above */
+  if (!list_empty (&ready_list) &&
+      curr->priority < list_entry (list_front (&ready_list), struct thread, elem)->priority)
+  {
+    thread_yield ();
   }
 }
 
