@@ -932,4 +932,413 @@ After the fixes described above, every one of these passes, along with all five 
 
 
 
+## Mission 3 - MLFQS
+
+### What's happening now
+
+Mission 2 left you with a scheduler that always picks the highest priority ready thread. `ready_list` stays sorted by `priority` at every point that matters, `next_thread_to_run()` pops the front, and priority donation makes sure a high priority thread never gets stuck behind a lower one just because of a lock dependency. All of that works exactly as intended and passes every test.
+
+### The problem
+
+Here's a scenario worth walking through. Thread H has `priority = 63` and it's always ready to run, it never blocks, never sleeps, always has work to do. Thread L has `priority = 10`. Under strict priority scheduling, does L ever get to run at all, for as long as H keeps behaving this way?
+
+It doesn't. `next_thread_to_run()` always picks the front of `ready_list`, and since priorities never change on their own, H sits at the front forever and L never moves up. This is starvation, a thread that's ready and able to run but never actually gets picked, indefinitely.
+
+Worth being precise about how this is different from the problem Mission 2 solved. Priority inversion (what donation fixes) was a scheduling logic bug, the mechanism itself was broken and a high priority thread could get stuck behind a lower one it had no business losing to, purely because of a lock dependency somewhere. The fix there was structural, patch the mechanism so it behaves correctly.
+
+This is different. There's no bug in the mechanism at all, `next_thread_to_run()` is doing exactly what strict priority scheduling is supposed to do, always run the highest priority ready thread. The starvation here isn't a malfunction, it's the mechanism working perfectly and that being the actual problem. The root cause is that priorities are **static**, nothing ever pushes L up or H down, so the ranking never changes and the outcome never changes either.
+
+### The fix, in shape before it's in code
+
+So Mission 3 isn't "fix a broken mechanism" the way Mission 2 was. It's "make priority itself dynamic," so a thread that's been hogging the CPU gradually looks less attractive to the scheduler over time, and a thread that's been starved gradually looks more attractive, without anyone or anything external having to intervene. The scheduler's decision logic, `next_thread_to_run()`, pick the front, stays exactly the same. What changes is that `priority` stops being a number you set once and becomes a number the system continuously recomputes based on behavior.
+
+A few wrong turns are worth recording here, since ruling them out is most of what shaped the actual design.
+
+**Two separate counters, one for "how long it ran" and one for "how many times it got skipped."** This was the first instinct, track both directly. It turns out one number is enough if it's allowed to move in both directions, accumulating while the thread runs and decaying while it doesn't. A thread that's been hogging the CPU shows up as a high, still climbing value. A thread that's been starved shows up as a value that's been quietly decaying the whole time it sat unpicked. Same number, read from either direction, no second counter needed.
+
+**A percentage of CPU availability.** The idea of tracking "what fraction of available CPU time has this thread gotten" sounds reasonable, but it implies a fixed denominator, a percentage of what, exactly. The actual mechanism doesn't divide into a total at all. It's simpler than that, a running number that goes up while the thread is actually executing and decays back down over time whenever it isn't. No division, just accumulation and decay. Pintos calls this value `recent_cpu`.
+
+**Reusing priority donation for this.** Donation and MLFQS turned out to be mutually exclusive mechanisms entirely, not just conceptually different but literally never active at the same time in the same run. There's no `donations` list, no `base_priority`, no `waiting_lock` involved anywhere in MLFQS. It computes priority from a completely different formula with nothing about locks or donors in it. The donation code you already built doesn't get deleted, it gets wrapped so it only runs when MLFQS isn't active, and MLFQS runs a separate, independent path.
+
+**Adjusting `priority` directly, every single tick, while a thread runs.** This looked like the obvious way to make priority dynamic, decrement it a little every tick the thread runs, let it climb back up otherwise. The problem is `ready_list` staying accurate. If `priority` changes every tick but nothing resorts the list to match, the list drifts out of sync with the actual current values almost immediately, and by the time anyone reads it, the sort order is already wrong. Resorting on every tick, a hundred times a second, to keep up, is expensive for no real benefit.
+
+**The actual structure that avoids that problem** splits the work into two layers running at two different speeds. `recent_cpu` gets updated every tick, this is cheap, just an increment on whichever thread is running, no sorting and no recomputation of `priority` involved. `priority` itself only gets recomputed from `recent_cpu` periodically, not every tick, so `ready_list` only needs resorting at those periodic checkpoints instead of constantly.
+
+That periodic rhythm can't sit at either extreme. Too rare, say once every few seconds, and the system takes that long to even notice H needs to be knocked down, which defeats the point. Too often, every tick, and you're back to paying the same resorting cost the two layer split was meant to avoid. Pintos settles on recomputing `priority` every 4 ticks, 25 times a second, often enough to feel responsive and rare enough not to waste cycles.
+
+There's a third value sitting on an even slower rhythm than either of the first two, `load_avg`. It's not per thread, it's one single global number for the whole system, and it only gets recomputed once a second. It isn't a percentage of CPU busy versus idle either, in the same way a real Unix load average (the kind you'd see reported as `0.24, 0.26, 0.20` on a Linux machine, which is exactly the same concept under the same name) isn't capped at 100%. It's closer to a headcount of demand, on average how many threads currently want to run, counting whoever's `THREAD_READY` plus whoever's `THREAD_RUNNING` at the moment it's sampled. It changes slowly on purpose, since it's meant to reflect overall system load rather than react to every individual thread's momentary behavior, and it feeds into how fast every thread's `recent_cpu` decays.
+
+### What's left
+
+All three of these, `recent_cpu`, `priority`, `load_avg`, need actual formulas, which Pintos hands you directly rather than something you need to derive yourself. Those formulas involve fractional numbers, and kernels avoid floating point entirely, so they get implemented using fixed point integer arithmetic instead of `float`/`double`. Once the formulas and the arithmetic are in place, the three different update rhythms, every tick, every 4 ticks, every second, need to get wired into `timer_interrupt()` correctly. And the whole thing needs to sit behind the `-mlfqs` flag, so donation still runs exactly as before when MLFQS isn't active, and `thread_set_priority()` gets disabled from taking manual effect once it is.
+
+### Fixed point arithmetic
+
+Kernels avoid the floating point unit entirely. Saving and restoring FPU state on every context switch is real overhead a general purpose kernel doesn't want to pay for, especially inside something as frequent as a timer interrupt. So instead of `float`/`double`, all the fractional math in this mission gets done using a plain `int`, where some of the bits are treated as representing a fractional part.
+
+Pintos specifies **17.14 fixed point**, a 32 bit signed int split conceptually into 17 bits for the integer part and 14 bits for the fractional part, plus 1 sign bit. In practice this just means converting a real integer `n` into this representation is done by multiplying it by `2^14`, call this `f` (16384), the scaling factor.
+
+Addition and subtraction need no special handling at all. If `x` represents real number `a` (meaning `x = a * f`) and `y` represents `b`, then `x + y = (a + f) + (b * f) = (a + b) * f`, which is exactly the correctly scaled representation of the real sum. Plain integer `+` already does the right thing, since both numbers share the same scaling factor and addition doesn't touch it.
+
+Multiplication is where it breaks. `x * y = (a * f) * (b * f) = (a * b) * f²`, one extra factor of `f` more than wanted. The fix is dividing by `f` once after multiplying. A real trap here, two already-scaled numbers multiplied together can genuinely overflow a 32 bit int, so the actual convention casts through a 64 bit type for the intermediate multiplication first.
+
+Division is the mirror image, and order matters more here than it did for multiplication. `x / y = (a * f) / (b * f) = a / b`, the scaling factor cancels out entirely rather than doubling up, so a multiplication by `f` needs to be added back in, and it has to happen before the division, not after, since dividing first as plain integers throws away the fractional precision before `f` ever gets applied.
+
+Converting a plain integer into fixed point is exact, multiply by `f`. Converting fixed point back to a plain integer is where a real subtlety hides, plain division truncates toward zero in C, silently dropping any fractional part. Some of the MLFQS formulas specifically require rounding to the nearest integer rather than truncating, so there are genuinely two different fixed point to int conversions, and it matters which one a given formula calls for.
+
+All of this lives in one small header, `threads/fixed-point.h`, as `static inline` functions with full bodies written directly in the header, no matching `.c` file. This is intentional given `static` (private to whichever file includes it) and `inline` (a hint to paste the code directly at the call site rather than doing a real function call, worth using here since these get called extremely often). An include guard (`#ifndef` / `#define` / `#endif`) wraps the whole file, the same pattern already used at the top of `thread.h` and `synch.h`, since without it a header included by more than one file could get its contents seen twice by the compiler.
+
+```c
+/* threads/fixed-point.h */
+
+#ifndef THREADS_FIXED_POINT_H
+#define THREADS_FIXED_POINT_H
+
+#include <stdint.h>
+
+#define F (1 << 14)   /* 16384, the scaling factor for 17.14 fixed-point */
+
+/* int -> fixed-point */
+static inline int
+int_to_fp (int n)
+{
+  return n * F;
+}
+
+/* fixed-point -> int, truncating toward zero */
+static inline int
+fp_to_int (int x)
+{
+  return x / F;
+}
+
+/* fixed-point -> int, rounding to nearest */
+static inline int
+fp_to_int_round (int x)
+{
+  if (x >= 0)
+    return (x + F / 2) / F;
+  else
+    return (x - F / 2) / F;
+}
+
+/* add two fixed-point values */
+static inline int
+add_fp (int x, int y)
+{
+  return x + y;
+}
+
+/* subtract two fixed-point values */
+static inline int
+sub_fp (int x, int y)
+{
+  return x - y;
+}
+
+/* add a fixed-point value and an int */
+static inline int
+add_fp_int (int x, int n)
+{
+  return x + n * F;
+}
+
+/* subtract an int from a fixed-point value */
+static inline int
+sub_fp_int (int x, int n)
+{
+  return x - n * F;
+}
+
+/* multiply two fixed-point values */
+static inline int
+mul_fp (int x, int y)
+{
+  return ((int64_t) x) * y / F;
+}
+
+/* multiply a fixed-point value by an int */
+static inline int
+mul_fp_int (int x, int n)
+{
+  return x * n;
+}
+
+/* divide two fixed-point values */
+static inline int
+div_fp (int x, int y)
+{
+  return (((int64_t) x) * F) / y;
+}
+
+/* divide a fixed-point value by an int */
+static inline int
+div_fp_int (int x, int n)
+{
+  return x / n;
+}
+
+#endif /* threads/fixed-point.h */
+```
+
+`mul_fp_int` and `div_fp_int` needed no `int64_t`/`F` treatment at all, since one operand there is a plain int, not itself scaled by `f`, so `x * n` (fixed point times a plain int) is already correctly scaled with no adjustment needed.
+
+### New state
+
+Two new fields go on `struct thread`, alongside everything added in Mission 2:
+
+```c
+int nice;         /* how willing this thread is to yield CPU to others */
+int recent_cpu;   /* fixed-point, CPU usage, accumulates while running, decays otherwise */
+```
+
+`nice` runs from -20 to 20. Negative means less willing to yield, greedier, pushes priority up relative to others. Positive means more willing to yield, generous, pushes priority down. 0 is neutral, the default every thread starts with unless told otherwise. `nice` doesn't do anything on its own, it's one of two inputs feeding the priority formula, the other being `recent_cpu`. Both push in the same direction, higher `recent_cpu` and higher `nice` both push priority down.
+
+One new global, not per thread, alongside `ready_list` in `thread.c`:
+
+```c
+int load_avg;   /* fixed-point, system-wide, updated once a second */
+```
+
+And one flag that gates the whole mission, already present in the starter code:
+
+```c
+bool thread_mlfqs;   /* true if -mlfqs was passed at boot */
+```
+
+`nice` and `recent_cpu` get initialized inside `init_thread()`, the one function guaranteed to run for every thread, `main` included, for the same reason every other new field this project has added lives there:
+
+```c
+/* Added inside init_thread(), alongside the existing t->priority = priority; */
+t->nice = 0;
+t->recent_cpu = 0;
+```
+
+A new thread doesn't just start flat at these defaults though. Pintos specifies that a child thread inherits its parent's `nice` and `recent_cpu`, not 0 for either. Think about what `recent_cpu` represents, how much CPU this thread's lineage of work has actually been consuming lately. If a heavily CPU hogging thread spawned a child that started at a flat 0, the system would treat the child as having no usage history at all, an artificial priority boost purely for being new, even though it's really just an extension of a thread that's already been dominating the system. Inheriting the parent's value closes that loophole, it stops the trick of spawning a fresh child specifically to reset usage history and jump back up in priority. Mechanically, the parent is just whichever thread is executing at the moment `thread_create()` runs, `thread_current()`, called from inside `thread_create()` before the new thread is fully set up:
+
+```c
+/* Inside thread_create(), after init_thread() and the stack frame setup */
+struct thread *curr = thread_current();
+t->nice = curr->nice;
+t->recent_cpu = curr->recent_cpu;
+```
+
+`load_avg` needs the same `extern`/real-definition split already used for `thread_mlfqs`. One file owns the actual storage, every other file that needs to touch it declares it as `extern`, a promise that it exists somewhere without allocating a second copy, the same underlying reason a duplicated `priority_comparator` definition across two files caused a linker error earlier in this project.
+
+```c
+/* thread.h */
+extern int load_avg;
+```
+```c
+/* thread.c */
+int load_avg = 0;
+```
+
+`load_avg` is stored fixed point too, since it's a fractional average computed from a ratio-based formula, and `0` happens to be a valid starting value either way, since the fixed point representation of the real number `0` is just `0 * F`, no conversion needed.
+
+### The three formulas
+
+**`priority`**, recomputed every 4 ticks, for every thread:
+
+```
+priority = PRI_MAX - (recent_cpu / 4) - (nice * 2)
+```
+
+Start from `PRI_MAX` (63, the ceiling) and subtract two penalties. More recent CPU usage pulls priority down, more generosity (`nice`) pulls priority down too, both terms push the same direction. The result gets clamped to stay within `PRI_MIN` to `PRI_MAX`, since the subtraction could technically push it outside that range.
+
+**`recent_cpu`**, two different things happen to it at two different moments. Every tick, the running thread's `recent_cpu` just gets bumped by 1. Once a second, alongside `load_avg`'s own recompute, every thread's `recent_cpu` gets recalculated with decay:
+
+```
+recent_cpu = (2 * load_avg) / (2 * load_avg + 1) * recent_cpu + nice
+```
+
+That fraction is always slightly less than 1, so multiplying `recent_cpu` by it shrinks the value a little, the decay reasoned out earlier in this mission. How much it shrinks depends on `load_avg`, a busier system decays more slowly, reflecting that under heavy load everyone's usage naturally stays elevated longer. The `+ nice` nudges the baseline up or down slightly depending on the thread's own generosity setting.
+
+**`load_avg`**, recomputed once a second, system wide, not per thread:
+
+```
+load_avg = (59/60) * load_avg + (1/60) * ready_threads
+```
+
+Where `ready_threads` is the count of threads that are `THREAD_READY` or `THREAD_RUNNING` at that exact moment, the headcount reasoned out earlier. This is an exponential moving average, mostly keep the old value (59/60 of it) and blend in a small amount of the current reading (1/60 of it), which is what makes it change slowly and smoothly rather than jumping around every time the ready thread count fluctuates for a moment.
+
+The dependency chain only flows one way, `load_avg` needs nothing else as input, `recent_cpu`'s decay needs `load_avg`, `priority` needs `recent_cpu`. So whenever the once-a-second recompute happens, `load_avg` has to be recalculated before `recent_cpu`'s decay step runs, since the decay formula uses whatever `load_avg` currently is.
+
+As actual functions, pasted above `thread_tick()` in `thread.c` so the compiler has already seen them by the time `thread_tick()` calls them:
+
+```c
+static void
+mlfqs_calculate_load_avg (void)
+{
+  int ready_threads = list_size (&ready_list);
+  if (thread_current () != idle_thread)
+    ready_threads++;
+
+  int term1 = mul_fp (div_fp (int_to_fp (59), int_to_fp (60)), load_avg);
+  int term2 = mul_fp_int (div_fp (int_to_fp (1), int_to_fp (60)), ready_threads);
+  load_avg = add_fp (term1, term2);
+}
+
+static void
+mlfqs_increment_recent_cpu (void)
+{
+  struct thread *cur = thread_current ();
+  if (cur != idle_thread)
+    cur->recent_cpu = add_fp_int (cur->recent_cpu, 1);
+}
+
+static void
+mlfqs_recalculate_recent_cpu (struct thread *t, void *aux UNUSED)
+{
+  if (t == idle_thread)
+    return;
+
+  int two_load_avg = mul_fp_int (load_avg, 2);
+  int coefficient = div_fp (two_load_avg, add_fp_int (two_load_avg, 1));
+  t->recent_cpu = add_fp_int (mul_fp (coefficient, t->recent_cpu), t->nice);
+}
+
+static void
+mlfqs_recalculate_priority (struct thread *t, void *aux UNUSED)
+{
+  if (t == idle_thread)
+    return;
+
+  int new_priority = PRI_MAX - fp_to_int_round (div_fp_int (t->recent_cpu, 4)) - (t->nice * 2);
+
+  if (new_priority > PRI_MAX) new_priority = PRI_MAX;
+  if (new_priority < PRI_MIN) new_priority = PRI_MIN;
+
+  t->priority = new_priority;
+}
+```
+
+Recomputing "every thread's" priority or `recent_cpu` means iterating over all threads, not just the running one, done here with `thread_foreach()`, already declared in `thread.h` and otherwise unused until this mission.
+
+### Wiring the three rhythms into thread_tick()
+
+`timer_interrupt()` fires on every tick and calls `thread_tick()` every single time unconditionally, so `thread_tick()` is the one guaranteed every-tick hook, there's no separate, less frequent trigger available on its own. Wanting something to happen every 4 ticks or once a second means running a cheap check every tick anyway and wrapping the actual work in an `if`.
+
+`timer_ticks() % N == 0` fires exactly once every `N` ticks, since it's only true when the running tick count is an exact multiple of `N`. `N = 4` for the priority recompute, `N = TIMER_FREQ` (100, the timer's hardware frequency, 100 ticks per second) for the once-a-second `load_avg`/`recent_cpu` recompute.
+
+```c
+void
+thread_tick (void)
+{
+  struct thread *t = thread_current ();
+
+  if (t == idle_thread)
+    idle_ticks++;
+#ifdef USERPROG
+  else if (t->pagedir != NULL)
+    user_ticks++;
+#endif
+  else
+    kernel_ticks++;
+
+  if (thread_mlfqs)
+  {
+    mlfqs_increment_recent_cpu ();
+
+    if (timer_ticks () % TIMER_FREQ == 0)
+    {
+      mlfqs_calculate_load_avg ();
+      thread_foreach (mlfqs_recalculate_recent_cpu, NULL);
+    }
+
+    if (timer_ticks () % 4 == 0)
+      thread_foreach (mlfqs_recalculate_priority, NULL);
+  }
+
+  if (++thread_ticks >= TIME_SLICE)
+    intr_yield_on_return ();
+}
+```
+
+Order inside the once-a-second block matters, `mlfqs_calculate_load_avg()` runs before `thread_foreach(mlfqs_recalculate_recent_cpu, ...)`, not after, matching the one-way dependency chain from the formulas section. The `if (thread_mlfqs)` gate wraps all three rhythms together, not each individually, since none of this should run at all in non MLFQS mode.
+
+### The four accessor functions
+
+`nice`, `recent_cpu`, and `load_avg` are internal scheduler state, nothing outside `thread.c` should be able to just reach in and mutate them directly, the same reasoning already behind why `thread_set_priority()` was never a plain field assignment either, since setting `nice` specifically has to trigger a priority recompute and a possible preemption check right away, not silently leave `priority` stale until the next periodic recompute. These four functions are also the entire public interface the `mlfqs-*` tests actually call, there's no other entry point for a test to ask "what's your recent_cpu" or "what's the system load average right now."
+
+```c
+void
+thread_set_nice (int nice)
+{
+  thread_current ()->nice = nice;
+  mlfqs_recalculate_priority (thread_current (), NULL);
+  if (!list_empty (&ready_list) &&
+      thread_current ()->priority < list_entry (list_front (&ready_list), struct thread, elem)->priority)
+    thread_yield ();
+}
+
+int
+thread_get_nice (void)
+{
+  return thread_current ()->nice;
+}
+
+int
+thread_get_load_avg (void)
+{
+  return fp_to_int_round (mul_fp_int (load_avg, 100));
+}
+
+int
+thread_get_recent_cpu (void)
+{
+  return fp_to_int_round (mul_fp_int (thread_current ()->recent_cpu, 100));
+}
+```
+
+`thread_get_load_avg()` and `thread_get_recent_cpu()` are specified to return 100 times the real value, not the raw fixed point number. The scaling by 100 has to happen before the fixed point to int conversion, not after, multiplying an already truncated integer by 100 loses precision that multiplying the fixed point value first and rounding once at the end preserves.
+
+### The -mlfqs gate
+
+Donation and MLFQS are mutually exclusive, never active at the same time in the same run, but the donation code from Mission 2 doesn't get deleted, it gets wrapped so it only runs when `thread_mlfqs` is false.
+
+In `thread_set_priority()`, as the very first line, since priority is fully computed by the system in MLFQS mode and a manual override would fight the formula:
+
+```c
+void
+thread_set_priority (int new_priority)
+{
+  if (thread_mlfqs) return;
+
+  struct thread *curr = thread_current ();
+  ... /* rest unchanged from Mission 2 */
+```
+
+In `lock_acquire()` and `lock_release()`, wrapping the existing donation blocks so they're skipped entirely in MLFQS mode:
+
+```c
+/* lock_acquire() */
+if (!thread_mlfqs && lock->holder != NULL)
+{
+  /* existing donation code, unchanged */
+}
+```
+```c
+/* lock_release() */
+if (!thread_mlfqs)
+{
+  /* existing donor-removal + priority recompute code, unchanged */
+}
+```
+
+And in `thread_create()`, one more line right after the `nice`/`recent_cpu` inheritance:
+
+```c
+struct thread *curr = thread_current();
+t->nice = curr->nice;
+t->recent_cpu = curr->recent_cpu;
+
+if (thread_mlfqs)
+  mlfqs_recalculate_priority (t, NULL);
+```
+
+Without this last line a new thread's `priority` stays at whatever flat default `init_thread()` assigned, computed from nothing, and it gets inserted into `ready_list` sorted by that stale value rather than what its inherited `nice`/`recent_cpu` actually implies, until the next periodic recompute happens to sweep through and correct it. Since MLFQS is meant to be the only source of truth for priority, a thread sits briefly lying about its own priority the moment it's born without this fix.
+
+
+
 
