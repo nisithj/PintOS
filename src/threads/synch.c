@@ -203,7 +203,7 @@ lock_acquire (struct lock *lock)
   ASSERT (!lock_held_by_current_thread (lock));
 
   /*Priority Donatation additions*/
-  if(lock->holder != NULL){
+  if(!thread_mlfqs && lock->holder != NULL){
 
     struct thread *current_thread = thread_current();    
 
@@ -272,6 +272,14 @@ lock_release (struct lock *lock)
   ASSERT (lock_held_by_current_thread (lock));
 
   struct thread *curr = thread_current ();
+
+  /* No donation under mlfqs, so there is nothing to undo. */
+  if (thread_mlfqs)
+    {
+      lock->holder = NULL;
+      sema_up (&lock->semaphore);
+      return;
+    }
 
   /* Step 1: remove every donor whose waiting_lock is THIS lock —
      not just one, since multiple threads can be waiting on the same lock */
