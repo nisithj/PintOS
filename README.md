@@ -23,7 +23,7 @@ Three missions extending Pintos's thread system:
 - **Mission 2 — Priority Scheduling & Donation:** strict priority scheduling plus priority donation to solve priority inversion, including nested and multiple-donation cases.
 - **Mission 3 — MLFQS (Advanced Scheduler):** a 4.4BSD-style multi-level feedback queue scheduler using fixed-point arithmetic (no FPU in the kernel).
 
-📄 Guide: [`guides/project1-threads.md`](./guides/project1-threads.md) *(mission 1 - Alarm Clock completed)*
+📄 Guide: [`guides/project1-threads.md`](./guides/project1-threads.md)
 
 ---
 
